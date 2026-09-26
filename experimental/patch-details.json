@@ -1,0 +1,21 @@
+{
+  "system_build": "26A428",
+  "source_sha256": "08c81e294ec89c34c7f8b77cb8ea864ade46cd52f4d642da0d24c861c4dbc008",
+  "patches": [
+    {
+      "subtype": "0x80000002",
+      "virtual_address": "0x1001d18d4",
+      "file_offset": "0x1d58d4",
+      "old_instruction": "0xd2e7fc08",
+      "new_instruction": "0xd2800008"
+    },
+    {
+      "subtype": "0x8000000c",
+      "virtual_address": "0x1001c4f40",
+      "file_offset": "0x814f40",
+      "old_instruction": "0xd2e7fc08",
+      "new_instruction": "0xd2800008"
+    }
+  ],
+  "status": "offline patch; not installed or runtime verified"
+}
