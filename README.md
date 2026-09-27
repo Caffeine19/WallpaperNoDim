@@ -8,7 +8,7 @@ I built this small desktop app with help from GPT-6 in Codex after macOS started
 
 ## How it works
 
-The app reads the wallpaper image for each connected screen and displays a static copy in a borderless window, just above the desktop window level. These windows ignore mouse clicks and join all Spaces.
+The app reads the wallpaper image for each connected screen and displays a static copy in a borderless window, just above the desktop window level. These windows ignore mouse clicks and join all Spaces. For dynamic HEIC files, it reads the embedded light/dark image mapping instead of always displaying the primary frame. Automatic selection follows the system appearance; recognized wallpaper-specific Light/Dark settings take precedence.
 
 On my setup, the copies remain bright while I use native Fill / Maximize. The system's dimming behavior still exists underneath: this app provides a visual workaround. It does not resize app windows, modify system files, or require disabling System Integrity Protection (SIP).
 
@@ -20,7 +20,7 @@ Open `WallpaperNoDimTest.app`, or run this command from the project directory:
 open WallpaperNoDimTest.app
 ```
 
-The menu-bar item is labeled **Wallpaper Test**. Choose **Quit and restore wallpaper** to remove the overlay immediately.
+The menu-bar item uses a warning-light icon (`warninglight`). **Launch at Login** is enabled on first launch; uncheck it to disable automatic startup. If macOS requires approval, use **Open Login Items Settings…**. Subsequent launches respect changes made in System Settings. Choose **Refresh Wallpaper** after changing your wallpaper to reload the images for all connected screens. Choose **Quit and restore wallpaper** to remove the overlay immediately. System light/dark appearance changes and screen-layout changes also trigger a refresh automatically.
 
 ## Build
 
@@ -30,12 +30,13 @@ Install Xcode or Command Line Tools with a macOS SDK, then run:
 ./build.sh
 ```
 
-The script builds the app and applies a local ad-hoc signature. Source: [`WallpaperNoDimTest.m`](WallpaperNoDimTest.m).
+The script builds the app and applies a local ad-hoc signature. Sources: [`WallpaperNoDimTest.m`](WallpaperNoDimTest.m) for the app and [`WallpaperImage.m`](WallpaperImage.m) for image decoding.
 
 ## Limitations
 
-- The overlay is a static image; animated and dynamic wallpaper effects are hidden while it runs.
-- Wallpapers and screen layouts are read at launch. Restart the app after changing either.
+- The overlay is a static image. Light/dark HEIC variants are supported; video playback and exact solar/time-of-day transitions are not reproduced.
+- Use **Refresh Wallpaper** after changing the wallpaper or its options. System appearance and screen-layout changes refresh automatically.
+- Wallpaper-specific appearance overrides are read on a best-effort basis from the macOS wallpaper configuration. If the format is unrecognized, the app follows system appearance.
 - No launch-at-login behavior is installed.
 - This is an experimental workaround verified on one Mac, not a system-wide fix tested across macOS versions.
 
@@ -63,3 +64,7 @@ I'd love feedback from anyone who can validate the patch route, find a real dimm
 ## Thanks
 
 Thanks to **GPT-6 in Codex** for helping investigate the behavior and build this workaround.
+
+## Dynamic wallpaper references
+
+[Apple: desktopImageURL(for:)](https://developer.apple.com/documentation/appkit/nsworkspace/desktopimageurl(for:)) returns the wallpaper file URL, not a rendered frame for the current appearance. The HEIC light/dark mapping is documented in [the original dynamic-wallpaper metadata investigation](https://gist.github.com/leptos-null/c88e8c3c0f9f6860c7500826031c8551).

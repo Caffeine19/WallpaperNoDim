@@ -8,7 +8,7 @@
 
 ## 工作原理
 
-程序读取各屏幕的壁纸图片，创建无边框窗口，把静态副本显示在桌面窗口层的上方。覆盖窗口忽略鼠标点击，并加入所有桌面空间。
+程序读取各屏幕的壁纸图片，创建无边框窗口，把静态副本显示在桌面窗口层的上方。覆盖窗口忽略鼠标点击，并加入所有桌面空间。对于动态 HEIC，程序读取内嵌的浅色／深色帧映射，不再始终显示默认帧。自动模式跟随系统外观；能够识别的壁纸单独 Light/Dark 设置会优先采用。
 
 在我的环境中，这些副本在使用原生 Fill / Maximize 时保持原亮度。系统底下的变暗逻辑仍然存在，这只是一个视觉绕过方案。程序不调整应用窗口、不修改系统文件，也不需要关闭 SIP（系统完整性保护）。
 
@@ -20,7 +20,7 @@
 open WallpaperNoDimTest.app
 ```
 
-菜单栏会出现“壁纸实验”。选择“退出并恢复原壁纸显示”，即可立即撤掉覆盖层。
+菜单栏会出现警示灯图标（`warninglight`）。**Launch at Login** 首次运行默认开启，取消勾选即可关闭登录启动。如果 macOS 要求批准，可选择 **Open Login Items Settings…**；后续启动会尊重系统设置中的修改。更换壁纸后，选择 **Refresh Wallpaper**，即可重新读取所有屏幕的壁纸；选择 **Quit and restore wallpaper**，即可立即撤掉覆盖层。系统浅色／深色外观和屏幕布局发生变化时，也会自动刷新。
 
 ## 编译
 
@@ -30,12 +30,13 @@ open WallpaperNoDimTest.app
 ./build.sh
 ```
 
-脚本生成应用并进行本地临时签名。源码：[`WallpaperNoDimTest.m`](WallpaperNoDimTest.m)。
+脚本生成应用并进行本地临时签名。应用源码：[`WallpaperNoDimTest.m`](WallpaperNoDimTest.m)；图片解码：[`WallpaperImage.m`](WallpaperImage.m)。
 
 ## 当前限制
 
-- 显示静态副本，运行期间看不到动态或动画壁纸效果。
-- 启动时读取壁纸和屏幕布局；更换后请退出并重新启动。
+- 覆盖层仍为静态图片，支持 HEIC 的浅色／深色版本；不播放视频，也不精确复现按太阳位置或一天中的时间变化的壁纸。
+- 更换壁纸或其选项后，请使用 **Refresh Wallpaper**。系统外观和屏幕布局变化会自动刷新。
+- 壁纸单独指定的外观会尽量从 macOS 配置中读取；无法识别配置格式时，程序跟随系统外观。
 - 没有设置开机启动。
 - 这是在一台 Mac 上验证有效的实验方案，尚未跨系统版本测试。
 
@@ -63,3 +64,7 @@ open WallpaperNoDimTest.app
 ## 致谢
 
 感谢 **GPT-6 / Codex** 帮助排查问题并实现这个小程序。
+
+## 动态壁纸参考
+
+[Apple 的 desktopImageURL(for:) 文档](https://developer.apple.com/documentation/appkit/nsworkspace/desktopimageurl(for:)) 返回壁纸文件 URL，并非当前外观的已渲染帧。HEIC 浅色／深色帧映射可参考[原始动态壁纸元数据研究](https://gist.github.com/leptos-null/c88e8c3c0f9f6860c7500826031c8551)。
