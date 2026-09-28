@@ -4,6 +4,8 @@ Keep your wallpaper bright when using native macOS Fill / Maximize and window ti
 
 [Chinese (Simplified)](README.zh-CN.md)
 
+![Menu-bar menu: Refresh Wallpaper, Launch at Login, Quit and restore wallpaper](docs/menu.png)
+
 I built this small desktop app with help from GPT-6 in Codex after macOS started dimming my wallpaper when I filled or tiled windows. The desktop-overlay workaround worked on my Mac running **macOS 27.0, build 26A428**. Other versions have not been tested.
 
 ## How it works

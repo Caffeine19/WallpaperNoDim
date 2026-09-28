@@ -4,6 +4,8 @@
 
 [English](README.md)
 
+![菜单栏菜单：Refresh Wallpaper、Launch at Login、Quit and restore wallpaper](docs/menu.png)
+
 我在 GPT-6 / Codex 的帮助下做了这个小程序，用于绕开原生填充或平铺窗口后壁纸变暗的效果。桌面覆盖方案已在我的 **macOS 27.0，构建号 26A428** 上验证有效，其他版本尚未测试。
 
 ## 工作原理
