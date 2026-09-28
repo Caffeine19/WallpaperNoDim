@@ -1,5 +1,7 @@
 # WallpaperNoDim
 
+Do whatever you want to this repo — fork it, modify it. I just wish it could be helpful and work as intended.
+
 Keep your wallpaper bright when using native macOS Fill / Maximize and window tiling.
 
 [Chinese (Simplified)](README.zh-CN.md)
