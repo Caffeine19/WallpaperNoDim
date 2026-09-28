@@ -14,10 +14,10 @@ On my setup, the copies remain bright while I use native Fill / Maximize. The sy
 
 ## Run and quit
 
-Open `WallpaperNoDimTest.app`, or run this command from the project directory:
+Open `WallpaperNoDim.app`, or run this command from the project directory:
 
 ```sh
-open WallpaperNoDimTest.app
+open WallpaperNoDim.app
 ```
 
 The menu-bar item uses a warning-light icon (`warninglight`). **Launch at Login** is enabled on first launch; uncheck it to disable automatic startup. If macOS requires approval, use **Open Login Items Settings…**. Subsequent launches respect changes made in System Settings. Choose **Refresh Wallpaper** after changing your wallpaper to reload the images for all connected screens. Choose **Quit and restore wallpaper** to remove the overlay immediately. System light/dark appearance changes and screen-layout changes also trigger a refresh automatically.
@@ -67,4 +67,4 @@ Thanks to **GPT-6 in Codex** for helping investigate the behavior and build this
 
 ## Dynamic wallpaper references
 
-[Apple: desktopImageURL(for:)](https://developer.apple.com/documentation/appkit/nsworkspace/desktopimageurl(for:)) returns the wallpaper file URL, not a rendered frame for the current appearance. The HEIC light/dark mapping is documented in [the original dynamic-wallpaper metadata investigation](https://gist.github.com/leptos-null/c88e8c3c0f9f6860c7500826031c8551).
+[Apple: desktopImageURL(for:)](<https://developer.apple.com/documentation/appkit/nsworkspace/desktopimageurl(for:)>) returns the wallpaper file URL, not a rendered frame for the current appearance. The HEIC light/dark mapping is documented in [the original dynamic-wallpaper metadata investigation](https://gist.github.com/leptos-null/c88e8c3c0f9f6860c7500826031c8551).

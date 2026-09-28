@@ -3,9 +3,22 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict/>
+	<dict>
+		<key>Resources/WallpaperNoDim.icns</key>
+		<data>
+		qMamnSxp8Cl7O5C94dbuWkdy7Yc=
+		</data>
+	</dict>
 	<key>files2</key>
-	<dict/>
+	<dict>
+		<key>Resources/WallpaperNoDim.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			jE0dWe1KW8NsNS3rPDtNS2hsQruNCpStFapnIqpWcHs=
+			</data>
+		</dict>
+	</dict>
 	<key>rules</key>
 	<dict>
 		<key>^Resources/</key>

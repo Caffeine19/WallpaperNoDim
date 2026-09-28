@@ -14,10 +14,10 @@
 
 ## 运行与退出
 
-双击 `WallpaperNoDimTest.app`，或在项目目录运行：
+双击 `WallpaperNoDim.app`，或在项目目录运行：
 
 ```sh
-open WallpaperNoDimTest.app
+open WallpaperNoDim.app
 ```
 
 菜单栏会出现警示灯图标（`warninglight`）。**Launch at Login** 首次运行默认开启，取消勾选即可关闭登录启动。如果 macOS 要求批准，可选择 **Open Login Items Settings…**；后续启动会尊重系统设置中的修改。更换壁纸后，选择 **Refresh Wallpaper**，即可重新读取所有屏幕的壁纸；选择 **Quit and restore wallpaper**，即可立即撤掉覆盖层。系统浅色／深色外观和屏幕布局发生变化时，也会自动刷新。
@@ -67,4 +67,4 @@ open WallpaperNoDimTest.app
 
 ## 动态壁纸参考
 
-[Apple 的 desktopImageURL(for:) 文档](https://developer.apple.com/documentation/appkit/nsworkspace/desktopimageurl(for:)) 返回壁纸文件 URL，并非当前外观的已渲染帧。HEIC 浅色／深色帧映射可参考[原始动态壁纸元数据研究](https://gist.github.com/leptos-null/c88e8c3c0f9f6860c7500826031c8551)。
+[Apple 的 desktopImageURL(for:) 文档](<https://developer.apple.com/documentation/appkit/nsworkspace/desktopimageurl(for:)>) 返回壁纸文件 URL，并非当前外观的已渲染帧。HEIC 浅色／深色帧映射可参考[原始动态壁纸元数据研究](https://gist.github.com/leptos-null/c88e8c3c0f9f6860c7500826031c8551)。
