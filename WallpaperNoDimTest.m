@@ -1,10 +1,18 @@
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreServices/CoreServices.h>
 #import <ServiceManagement/ServiceManagement.h>
+#include <sys/stat.h>
 #import "WallpaperImage.h"
 
 static void *AppearanceObservation = &AppearanceObservation;
+static NSString *const WallpaperCachePath = @"/private/var/db/Wallpapers";
+
+static NSString *WallpaperStoreDirectory(void) {
+    return [NSHomeDirectory() stringByAppendingPathComponent:
+        @"Library/Application Support/com.apple.wallpaper/Store"];
+}
 
 static NSDictionary *DecodePropertyList(id value) {
     if ([value isKindOfClass:NSDictionary.class]) return value;
@@ -135,16 +143,99 @@ static NSURL *CachedPhotoWallpaperURL(NSArray *choices, NSURL *cacheDirectory) {
     return nil;
 }
 
+static NSArray *WallpaperRenderInput(NSURL *url, BOOL dark, NSUInteger maxPixels) {
+    NSString *path = url.URLByResolvingSymlinksInPath.path;
+    struct stat info;
+    if (!path || stat(path.fileSystemRepresentation, &info) != 0) return nil;
+    // WallpaperAgent may rewrite its store without touching the selected image.
+    return @[path, @(dark), @(maxPixels), @(info.st_dev), @(info.st_ino), @(info.st_size),
+             @(info.st_mtimespec.tv_sec), @(info.st_mtimespec.tv_nsec)];
+}
+
+@interface WallpaperOverlay : NSObject
+@property (nonatomic, readonly) NSWindow *window;
+@property (nonatomic, copy) NSArray *renderInput;
+- (instancetype)initWithFrame:(NSRect)frame;
+- (void)moveToFrame:(NSRect)frame;
+- (void)showImage:(CGImageRef)image inFrame:(NSRect)frame;
+- (void)hide;
+@end
+
+@implementation WallpaperOverlay
+- (instancetype)initWithFrame:(NSRect)frame {
+    self = [super init];
+    if (!self) return nil;
+
+    _window = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless
+        backing:NSBackingStoreBuffered defer:NO];
+    _window.releasedWhenClosed = NO;
+    _window.level = CGWindowLevelForKey(kCGDesktopWindowLevelKey) + 1;
+    _window.ignoresMouseEvents = YES;
+    _window.opaque = YES;
+    _window.backgroundColor = NSColor.blackColor;
+    _window.hasShadow = NO;
+    _window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+        NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
+    NSView *view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
+    view.wantsLayer = YES;
+    view.layer.contentsGravity = kCAGravityResizeAspectFill;
+    _window.contentView = view;
+    return self;
+}
+
+- (void)moveToFrame:(NSRect)frame {
+    if (!NSEqualRects(self.window.frame, frame))
+        [self.window setFrame:frame display:YES animate:NO];
+}
+
+- (void)showImage:(CGImageRef)image inFrame:(NSRect)frame {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.window.contentView.layer.contents = (__bridge id)image;
+    [self moveToFrame:frame];
+    [CATransaction commit];
+    if (!self.window.isVisible) [self.window orderFrontRegardless];
+}
+
+- (void)hide {
+    if (self.window.isVisible) [self.window orderOut:nil];
+    self.window.contentView.layer.contents = nil;
+    self.renderInput = nil;
+}
+@end
+
 @interface WallpaperTest : NSObject <NSApplicationDelegate, NSMenuDelegate>
-@property NSMutableArray<NSWindow *> *windows;
+@property NSDictionary<NSNumber *, WallpaperOverlay *> *overlays;
 @property NSStatusItem *status;
 @property NSMenuItem *loginItem;
 @property NSMenuItem *loginSettingsItem;
+@property (nonatomic, assign) FSEventStreamRef wallpaperEvents;
+- (void)scheduleWallpaperRefresh;
 @end
+
+static void WallpaperFilesDidChange(ConstFSEventStreamRef stream, void *context,
+                                    size_t count, void *eventPaths,
+                                    const FSEventStreamEventFlags flags[],
+                                    const FSEventStreamEventId eventIDs[]) {
+    NSArray<NSString *> *paths = (__bridge NSArray *)eventPaths;
+    WallpaperTest *app = (__bridge WallpaperTest *)context;
+    for (size_t i = 0; i < count; i++) {
+        NSString *name = paths[i].lastPathComponent;
+        BOOL replacedDirectory = (flags[i] & kFSEventStreamEventFlagItemIsDir) &&
+            (flags[i] & (kFSEventStreamEventFlagItemCreated |
+                         kFSEventStreamEventFlagItemRemoved |
+                         kFSEventStreamEventFlagItemRenamed));
+        if ((flags[i] & kFSEventStreamEventFlagMustScanSubDirs) || replacedDirectory ||
+            [name isEqualToString:@"Index.plist"] || [name isEqualToString:@"Metadata.plist"] ||
+            [name isEqualToString:@"Wallpaper.png"]) {
+            [app scheduleWallpaperRefresh];
+            return;
+        }
+    }
+}
 
 @implementation WallpaperTest
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
-    self.windows = [NSMutableArray array];
     self.status = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
     NSImage *icon = [NSImage imageWithSystemSymbolName:@"warninglight"
                             accessibilityDescription:@"WallpaperNoDim"];
@@ -178,6 +269,48 @@ static NSURL *CachedPhotoWallpaperURL(NSArray *choices, NSURL *cacheDirectory) {
                context:AppearanceObservation];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refreshWallpaper:)
         name:NSApplicationDidChangeScreenParametersNotification object:nil];
+    [self watchWallpaperDirectories:@[WallpaperStoreDirectory(), WallpaperCachePath]];
+    [self refreshWallpaper:nil];
+}
+
+- (void)watchWallpaperDirectories:(NSArray<NSString *> *)paths {
+    FSEventStreamContext context = {0, (__bridge void *)self, NULL, NULL, NULL};
+    FSEventStreamRef stream = FSEventStreamCreate(NULL, WallpaperFilesDidChange, &context,
+        (__bridge CFArrayRef)paths, kFSEventStreamEventIdSinceNow, 0.2,
+        kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents);
+    if (stream) {
+        FSEventStreamSetDispatchQueue(stream, dispatch_get_main_queue());
+        if (FSEventStreamStart(stream)) {
+            self.wallpaperEvents = stream;
+            NSLog(@"Watching wallpaper configuration and cache for changes");
+            return;
+        }
+        FSEventStreamInvalidate(stream);
+        FSEventStreamRelease(stream);
+    }
+    NSLog(@"Unable to start automatic wallpaper refresh");
+}
+
+- (void)stopWatchingWallpaperDirectories {
+    if (self.wallpaperEvents) {
+        FSEventStreamStop(self.wallpaperEvents);
+        FSEventStreamInvalidate(self.wallpaperEvents);
+        FSEventStreamRelease(self.wallpaperEvents);
+        self.wallpaperEvents = NULL;
+    }
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+        selector:@selector(refreshAfterWallpaperChange) object:nil];
+}
+
+- (void)scheduleWallpaperRefresh {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+        selector:@selector(refreshAfterWallpaperChange) object:nil];
+    [self performSelector:@selector(refreshAfterWallpaperChange) withObject:nil
+        afterDelay:0.3 inModes:@[NSRunLoopCommonModes]];
+}
+
+- (void)refreshAfterWallpaperChange {
+    NSLog(@"Wallpaper files changed; checking overlays");
     [self refreshWallpaper:nil];
 }
 
@@ -222,13 +355,18 @@ static NSURL *CachedPhotoWallpaperURL(NSArray *choices, NSURL *cacheDirectory) {
     NSString *appearance = [NSApp.effectiveAppearance bestMatchFromAppearancesWithNames:
         @[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
     BOOL systemDark = [appearance isEqualToString:NSAppearanceNameDarkAqua];
-    NSString *storePath = [NSHomeDirectory() stringByAppendingPathComponent:
-        @"Library/Application Support/com.apple.wallpaper/Store/Index.plist"];
+    NSString *storePath = [WallpaperStoreDirectory() stringByAppendingPathComponent:@"Index.plist"];
     NSDictionary *store = DecodePropertyList([NSData dataWithContentsOfFile:storePath]);
-    NSURL *cacheDirectory = [NSURL fileURLWithPath:@"/private/var/db/Wallpapers" isDirectory:YES];
-    NSMutableArray<NSWindow *> *replacement = [NSMutableArray array];
+    NSURL *cacheDirectory = [NSURL fileURLWithPath:WallpaperCachePath isDirectory:YES];
+    BOOL forceReload = [sender isKindOfClass:NSMenuItem.class];
+    NSMutableDictionary<NSNumber *, WallpaperOverlay *> *attachedOverlays = [NSMutableDictionary dictionary];
 
     for (NSScreen *screen in NSScreen.screens) {
+        NSNumber *displayID = screen.deviceDescription[@"NSScreenNumber"];
+        if (!displayID) continue;
+        WallpaperOverlay *overlay = self.overlays[displayID];
+        if (overlay) attachedOverlays[displayID] = overlay;
+
         NSArray<NSDictionary *> *settings = WallpaperSettings(screen, store);
         NSURL *url = [NSWorkspace.sharedWorkspace desktopImageURLForScreen:screen];
         BOOL isCachedPhoto = NO;
@@ -238,50 +376,50 @@ static NSURL *CachedPhotoWallpaperURL(NSArray *choices, NSURL *cacheDirectory) {
                 url = CachedPhotoWallpaperURL(choices, cacheDirectory);
                 if (!url) {
                     NSLog(@"No matching Photos wallpaper cache for %@", screen.localizedName);
+                    [overlay hide];
                     continue;
                 }
                 isCachedPhoto = YES;
             }
         }
-        if (!url) continue;
+        if (!url) {
+            [overlay hide];
+            continue;
+        }
         NSString *override = ConfiguredAppearance(url, settings);
         BOOL dark = [override isEqualToString:@"dark"] ? YES :
                     [override isEqualToString:@"light"] ? NO : systemDark;
         NSUInteger maxPixels = (NSUInteger)ceil(MAX(screen.frame.size.width,
             screen.frame.size.height) * screen.backingScaleFactor);
+        NSArray *renderInput = WallpaperRenderInput(url, dark, maxPixels);
+        if (!forceReload && renderInput && [overlay.renderInput isEqualToArray:renderInput]) {
+            [overlay moveToFrame:screen.frame];
+            continue;
+        }
+
         size_t index = 0;
         CGImageRef image = CopyWallpaperImage(url, dark, maxPixels, &index);
         if (!image) {
             NSLog(@"Unable to load wallpaper for %@: %@", screen.localizedName, url.path);
+            [overlay hide];
             continue;
         }
 
-        NSWindow *window = [[NSWindow alloc] initWithContentRect:screen.frame
-            styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
-        window.releasedWhenClosed = NO;
-        window.level = CGWindowLevelForKey(kCGDesktopWindowLevelKey) + 1;
-        window.ignoresMouseEvents = YES;
-        window.opaque = YES;
-        window.backgroundColor = NSColor.blackColor;
-        window.hasShadow = NO;
-        window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-            NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
-        NSView *view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0,
-            screen.frame.size.width, screen.frame.size.height)];
-        view.wantsLayer = YES;
-        view.layer.contents = (__bridge id)image;
-        view.layer.contentsGravity = kCAGravityResizeAspectFill;
+        if (!overlay) {
+            overlay = [[WallpaperOverlay alloc] initWithFrame:screen.frame];
+            attachedOverlays[displayID] = overlay;
+        }
+        [overlay showImage:image inFrame:screen.frame];
+        overlay.renderInput = renderInput;
         CFRelease(image);
-        window.contentView = view;
-        [window orderFrontRegardless];
-        [replacement addObject:window];
         NSLog(isCachedPhoto ? @"Wallpaper refreshed from Photos cache: %@, %@, frame %zu, %@" :
               @"Wallpaper refreshed: %@, %@, frame %zu, %@", screen.localizedName,
               url.lastPathComponent, index, dark ? @"dark" : @"light");
     }
-    // Close previous overlays so removed screens and unavailable images do not stay stale.
-    for (NSWindow *window in self.windows) [window close];
-    self.windows = replacement;
+    for (NSNumber *displayID in self.overlays) {
+        if (!attachedOverlays[displayID]) [self.overlays[displayID].window close];
+    }
+    self.overlays = attachedOverlays;
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
@@ -294,6 +432,7 @@ static NSURL *CachedPhotoWallpaperURL(NSArray *choices, NSURL *cacheDirectory) {
 }
 
 - (void)applicationWillTerminate:(NSNotification *)note {
+    [self stopWatchingWallpaperDirectories];
     [NSApp removeObserver:self forKeyPath:@"effectiveAppearance" context:AppearanceObservation];
     [NSNotificationCenter.defaultCenter removeObserver:self];
 }

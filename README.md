@@ -24,7 +24,7 @@ Open `WallpaperNoDim.app`, or run this command from the project directory:
 open WallpaperNoDim.app
 ```
 
-The menu-bar item uses a warning-light icon (`warninglight`). **Launch at Login** is enabled on first launch; uncheck it to disable automatic startup. If macOS requires approval, use **Open Login Items Settings…**. Subsequent launches respect changes made in System Settings. Choose **Refresh Wallpaper** after changing your wallpaper to reload the images for all connected screens. Choose **Quit and restore wallpaper** to remove the overlay immediately. System light/dark appearance changes and screen-layout changes also trigger a refresh automatically.
+The menu-bar item uses a warning-light icon (`warninglight`). **Launch at Login** is enabled on first launch. Uncheck it to disable automatic startup. If macOS requires approval, use **Open Login Items Settings…**. Subsequent launches respect changes made in System Settings. The overlay refreshes automatically when macOS updates the wallpaper, the system appearance changes, or the screen layout changes. **Refresh Wallpaper** reloads all connected screens on demand. **Quit and restore wallpaper** removes the overlay immediately.
 
 ## Build
 
@@ -39,7 +39,6 @@ The script builds the app and applies a local ad-hoc signature. Sources: [`Wallp
 ## Limitations
 
 - The overlay is a static image. Light/dark HEIC variants are supported; video playback and exact solar/time-of-day transitions are not reproduced.
-- Use **Refresh Wallpaper** after changing the wallpaper or its options. System appearance and screen-layout changes refresh automatically.
 - Wallpaper-specific appearance overrides are read on a best-effort basis from the macOS wallpaper configuration. If the format is unrecognized, the app follows system appearance.
 - No launch-at-login behavior is installed.
 - This is an experimental workaround verified on one Mac, not a system-wide fix tested across macOS versions.

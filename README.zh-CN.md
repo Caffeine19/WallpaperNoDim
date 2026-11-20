@@ -22,7 +22,7 @@
 open WallpaperNoDim.app
 ```
 
-菜单栏会出现警示灯图标（`warninglight`）。**Launch at Login** 首次运行默认开启，取消勾选即可关闭登录启动。如果 macOS 要求批准，可选择 **Open Login Items Settings…**；后续启动会尊重系统设置中的修改。更换壁纸后，选择 **Refresh Wallpaper**，即可重新读取所有屏幕的壁纸；选择 **Quit and restore wallpaper**，即可立即撤掉覆盖层。系统浅色／深色外观和屏幕布局发生变化时，也会自动刷新。
+菜单栏会出现警示灯图标（`warninglight`）。**Launch at Login** 首次运行默认开启，取消勾选即可关闭登录启动。如果 macOS 要求批准，可选择 **Open Login Items Settings…**。后续启动会尊重系统设置中的修改。壁纸、系统浅色／深色外观或屏幕布局发生变化时，覆盖层会自动刷新。也可以选择 **Refresh Wallpaper** 手动重新读取所有屏幕的壁纸，或选择 **Quit and restore wallpaper** 立即撤掉覆盖层。
 
 ## 编译
 
@@ -37,7 +37,6 @@ open WallpaperNoDim.app
 ## 当前限制
 
 - 覆盖层仍为静态图片，支持 HEIC 的浅色／深色版本；不播放视频，也不精确复现按太阳位置或一天中的时间变化的壁纸。
-- 更换壁纸或其选项后，请使用 **Refresh Wallpaper**。系统外观和屏幕布局变化会自动刷新。
 - 壁纸单独指定的外观会尽量从 macOS 配置中读取；无法识别配置格式时，程序跟随系统外观。
 - 没有设置开机启动。
 - 这是在一台 Mac 上验证有效的实验方案，尚未跨系统版本测试。
