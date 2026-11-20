@@ -49,24 +49,35 @@ static NSString *FindAppearanceOption(id value) {
     return nil;
 }
 
-static NSString *ConfiguredAppearance(NSScreen *screen, NSURL *url, NSDictionary *store) {
+static NSArray<NSDictionary *> *WallpaperSettings(NSScreen *screen, NSDictionary *store) {
     CGDirectDisplayID displayID = [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
     CFUUIDRef uuid = CGDisplayCreateUUIDFromDisplayID(displayID);
     NSString *identifier = uuid ? CFBridgingRelease(CFUUIDCreateString(NULL, uuid)) : nil;
     if (uuid) CFRelease(uuid);
-    NSMutableArray *sets = [NSMutableArray array];
-    id displays = store[@"Displays"];
-    if ([displays isKindOfClass:NSDictionary.class] && identifier && displays[identifier])
-        [sets addObject:displays[identifier]];
+    NSMutableArray<NSDictionary *> *sets = [NSMutableArray array];
+    NSDictionary *displays = DecodePropertyList(store[@"Displays"]);
+    NSDictionary *display = identifier ? DecodePropertyList(displays[identifier]) : nil;
+    if (display) [sets addObject:display];
     for (NSString *key in @[@"AllSpacesAndDisplays", @"SystemDefault"])
-        if (store[key]) [sets addObject:store[key]];
+        if ([store[key] isKindOfClass:NSDictionary.class]) [sets addObject:store[key]];
+    return sets;
+}
 
-    for (id set in sets) {
-        if (![set isKindOfClass:NSDictionary.class]) continue;
-        NSDictionary *desktop = DecodePropertyList(set[@"Desktop"]);
-        NSDictionary *content = DecodePropertyList(desktop[@"Content"]);
-        NSArray *choices = content[@"Choices"];
-        if (![choices isKindOfClass:NSArray.class]) continue;
+static NSDictionary *DesktopContent(NSDictionary *settings) {
+    NSDictionary *desktop = DecodePropertyList(settings[@"Desktop"]);
+    if (!desktop) desktop = DecodePropertyList(settings[@"Linked"]);
+    return DecodePropertyList(desktop[@"Content"]);
+}
+
+static NSArray *WallpaperChoices(NSDictionary *content) {
+    id choices = content[@"Choices"];
+    return [choices isKindOfClass:NSArray.class] ? choices : nil;
+}
+
+static NSString *ConfiguredAppearance(NSURL *url, NSArray<NSDictionary *> *settings) {
+    for (NSDictionary *set in settings) {
+        NSDictionary *content = DesktopContent(set);
+        NSArray *choices = WallpaperChoices(content);
         for (id choice in choices) {
             if (![choice isKindOfClass:NSDictionary.class]) continue;
             NSDictionary *configuration = DecodePropertyList(choice[@"Configuration"]);
@@ -82,6 +93,44 @@ static NSString *ConfiguredAppearance(NSScreen *screen, NSURL *url, NSDictionary
                 DecodePropertyList(content[@"EncodedOptionValues"]));
             if (option) return option;
         }
+    }
+    return nil;
+}
+
+static NSArray *ConfiguredPhotoChoices(NSArray<NSDictionary *> *settings) {
+    for (NSDictionary *set in settings) {
+        NSArray *choices = WallpaperChoices(DesktopContent(set));
+        if (!choices.count) continue;
+        NSDictionary *choice = DecodePropertyList(choices.firstObject);
+        NSDictionary *configuration = DecodePropertyList(choice[@"Configuration"]);
+        if (choices.count == 1 &&
+            [choice[@"Provider"] isEqual:@"com.apple.wallpaper.extension.photos"] &&
+            [configuration[@"type"] isEqual:@"asset"] &&
+            [configuration[@"identifier"] isKindOfClass:NSString.class]) return choices;
+        break;
+    }
+    return nil;
+}
+
+static BOOL IsDefaultWallpaperURL(NSURL *url) {
+    if (!url) return YES;
+    NSURL *defaultURL = [NSURL fileURLWithPath:@"/System/Library/CoreServices/DefaultDesktop.heic"];
+    return [url.URLByResolvingSymlinksInPath.path
+        isEqualToString:defaultURL.URLByResolvingSymlinksInPath.path];
+}
+
+static NSURL *CachedPhotoWallpaperURL(NSArray *choices, NSURL *cacheDirectory) {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSArray<NSURL *> *entries = [files contentsOfDirectoryAtURL:cacheDirectory
+        includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:NULL];
+    for (NSURL *entry in entries) {
+        NSURL *metadataURL = [entry URLByAppendingPathComponent:@"Metadata.plist"];
+        NSDictionary *metadata = DecodePropertyList([NSData dataWithContentsOfURL:metadataURL]);
+        NSDictionary *content = DecodePropertyList(metadata[@"Content"]);
+        // The system cache is shared. A matching choice proves it contains this photo.
+        if (![WallpaperChoices(content) isEqualToArray:choices]) continue;
+        NSURL *imageURL = [entry URLByAppendingPathComponent:@"Wallpaper.png"];
+        if ([files isReadableFileAtPath:imageURL.path]) return imageURL;
     }
     return nil;
 }
@@ -176,12 +225,26 @@ static NSString *ConfiguredAppearance(NSScreen *screen, NSURL *url, NSDictionary
     NSString *storePath = [NSHomeDirectory() stringByAppendingPathComponent:
         @"Library/Application Support/com.apple.wallpaper/Store/Index.plist"];
     NSDictionary *store = DecodePropertyList([NSData dataWithContentsOfFile:storePath]);
+    NSURL *cacheDirectory = [NSURL fileURLWithPath:@"/private/var/db/Wallpapers" isDirectory:YES];
     NSMutableArray<NSWindow *> *replacement = [NSMutableArray array];
 
     for (NSScreen *screen in NSScreen.screens) {
+        NSArray<NSDictionary *> *settings = WallpaperSettings(screen, store);
         NSURL *url = [NSWorkspace.sharedWorkspace desktopImageURLForScreen:screen];
+        BOOL isCachedPhoto = NO;
+        if (IsDefaultWallpaperURL(url)) {
+            NSArray *choices = ConfiguredPhotoChoices(settings);
+            if (choices) {
+                url = CachedPhotoWallpaperURL(choices, cacheDirectory);
+                if (!url) {
+                    NSLog(@"No matching Photos wallpaper cache for %@", screen.localizedName);
+                    continue;
+                }
+                isCachedPhoto = YES;
+            }
+        }
         if (!url) continue;
-        NSString *override = ConfiguredAppearance(screen, url, store);
+        NSString *override = ConfiguredAppearance(url, settings);
         BOOL dark = [override isEqualToString:@"dark"] ? YES :
                     [override isEqualToString:@"light"] ? NO : systemDark;
         NSUInteger maxPixels = (NSUInteger)ceil(MAX(screen.frame.size.width,
@@ -212,7 +275,8 @@ static NSString *ConfiguredAppearance(NSScreen *screen, NSURL *url, NSDictionary
         window.contentView = view;
         [window orderFrontRegardless];
         [replacement addObject:window];
-        NSLog(@"Wallpaper refreshed: %@, %@, frame %zu, %@", screen.localizedName,
+        NSLog(isCachedPhoto ? @"Wallpaper refreshed from Photos cache: %@, %@, frame %zu, %@" :
+              @"Wallpaper refreshed: %@, %@, frame %zu, %@", screen.localizedName,
               url.lastPathComponent, index, dark ? @"dark" : @"light");
     }
     // Close previous overlays so removed screens and unavailable images do not stay stale.
