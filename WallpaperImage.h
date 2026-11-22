@@ -4,3 +4,4 @@
 size_t WallpaperImageIndex(CGImageSourceRef source, BOOL dark);
 CGImageRef CopyWallpaperImage(NSURL *url, BOOL dark, NSUInteger maxPixelSize,
                              size_t *selectedIndex) CF_RETURNS_RETAINED;
+CGImageRef CopyBlurredWallpaperPreview(CGImageRef image) CF_RETURNS_RETAINED;

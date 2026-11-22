@@ -1,4 +1,5 @@
 #import "WallpaperImage.h"
+#import <CoreImage/CoreImage.h>
 #import <math.h>
 
 static NSDictionary *AppearanceMapping(CGImageMetadataRef metadata, NSString *key) {
@@ -56,4 +57,20 @@ CGImageRef CopyWallpaperImage(NSURL *url, BOOL dark, NSUInteger maxPixelSize,
     if (selectedIndex) *selectedIndex = index;
     CFRelease(source);
     return image;
+}
+
+CGImageRef CopyBlurredWallpaperPreview(CGImageRef image) {
+    CIImage *source = [CIImage imageWithCGImage:image];
+    CGRect extent = source.extent;
+    CGFloat scale = MIN(1.0, 480.0 / MAX(extent.size.width, extent.size.height));
+    CIImage *preview = [source imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
+    CIImage *blurred = [[preview imageByClampingToExtent]
+        imageByApplyingFilter:@"CIGaussianBlur" withInputParameters:@{kCIInputRadiusKey: @8}];
+
+    static CIContext *context;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        context = [CIContext contextWithOptions:@{kCIContextCacheIntermediates: @NO}];
+    });
+    return [context createCGImage:blurred fromRect:preview.extent];
 }

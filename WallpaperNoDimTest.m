@@ -8,6 +8,7 @@
 
 static void *AppearanceObservation = &AppearanceObservation;
 static NSString *const WallpaperCachePath = @"/private/var/db/Wallpapers";
+static NSString *const WallpaperRevealAnimation = @"WallpaperReveal";
 
 static NSString *WallpaperStoreDirectory(void) {
     return [NSHomeDirectory() stringByAppendingPathComponent:
@@ -82,6 +83,16 @@ static NSArray *WallpaperChoices(NSDictionary *content) {
     return [choices isKindOfClass:NSArray.class] ? choices : nil;
 }
 
+static NSURL *WallpaperConfigurationFileURL(NSDictionary *configuration) {
+    id location = configuration[@"url"];
+    if ([location isKindOfClass:NSDictionary.class]) location = location[@"relative"];
+    if (![location isKindOfClass:NSString.class]) return nil;
+    NSString *value = location;
+    if (value.isAbsolutePath) return [NSURL fileURLWithPath:value];
+    NSURL *url = [NSURL URLWithString:value];
+    return url.isFileURL && url.path.isAbsolutePath ? url : nil;
+}
+
 static NSString *ConfiguredAppearance(NSURL *url, NSArray<NSDictionary *> *settings) {
     for (NSDictionary *set in settings) {
         NSDictionary *content = DesktopContent(set);
@@ -89,11 +100,7 @@ static NSString *ConfiguredAppearance(NSURL *url, NSArray<NSDictionary *> *setti
         for (id choice in choices) {
             if (![choice isKindOfClass:NSDictionary.class]) continue;
             NSDictionary *configuration = DecodePropertyList(choice[@"Configuration"]);
-            id configuredURL = configuration[@"url"];
-            NSString *location = [configuredURL isKindOfClass:NSDictionary.class]
-                ? configuredURL[@"relative"] : nil;
-            if (![location isKindOfClass:NSString.class]) continue;
-            NSURL *choiceURL = [NSURL URLWithString:location];
+            NSURL *choiceURL = WallpaperConfigurationFileURL(configuration);
             if (![choiceURL.URLByResolvingSymlinksInPath.path
                     isEqualToString:url.URLByResolvingSymlinksInPath.path]) continue;
             NSString *option = FindAppearanceOption(configuration);
@@ -105,17 +112,10 @@ static NSString *ConfiguredAppearance(NSURL *url, NSArray<NSDictionary *> *setti
     return nil;
 }
 
-static NSArray *ConfiguredPhotoChoices(NSArray<NSDictionary *> *settings) {
+static NSDictionary *ConfiguredWallpaperContent(NSArray<NSDictionary *> *settings) {
     for (NSDictionary *set in settings) {
-        NSArray *choices = WallpaperChoices(DesktopContent(set));
-        if (!choices.count) continue;
-        NSDictionary *choice = DecodePropertyList(choices.firstObject);
-        NSDictionary *configuration = DecodePropertyList(choice[@"Configuration"]);
-        if (choices.count == 1 &&
-            [choice[@"Provider"] isEqual:@"com.apple.wallpaper.extension.photos"] &&
-            [configuration[@"type"] isEqual:@"asset"] &&
-            [configuration[@"identifier"] isKindOfClass:NSString.class]) return choices;
-        break;
+        NSDictionary *content = DesktopContent(set);
+        if (WallpaperChoices(content).count) return content;
     }
     return nil;
 }
@@ -127,7 +127,14 @@ static BOOL IsDefaultWallpaperURL(NSURL *url) {
         isEqualToString:defaultURL.URLByResolvingSymlinksInPath.path];
 }
 
-static NSURL *CachedPhotoWallpaperURL(NSArray *choices, NSURL *cacheDirectory) {
+static NSURL *CachedWallpaperURL(NSDictionary *configured, NSURL *cacheDirectory) {
+    NSArray *choices = WallpaperChoices(configured);
+    if (!choices.count) return nil;
+    id options = configured[@"EncodedOptionValues"] ?: configured[@"OptionValues"];
+    NSDictionary *configuredOptions = DecodePropertyList(options);
+    if (options && !configuredOptions) return nil;
+    id configuredShuffle = configured[@"Shuffle"] ?: @"$null";
+
     NSFileManager *files = NSFileManager.defaultManager;
     NSArray<NSURL *> *entries = [files contentsOfDirectoryAtURL:cacheDirectory
         includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:NULL];
@@ -135,29 +142,63 @@ static NSURL *CachedPhotoWallpaperURL(NSArray *choices, NSURL *cacheDirectory) {
         NSURL *metadataURL = [entry URLByAppendingPathComponent:@"Metadata.plist"];
         NSDictionary *metadata = DecodePropertyList([NSData dataWithContentsOfURL:metadataURL]);
         NSDictionary *content = DecodePropertyList(metadata[@"Content"]);
-        // The system cache is shared. A matching choice proves it contains this photo.
+        // The system cache is shared across wallpaper providers and screens.
         if (![WallpaperChoices(content) isEqualToArray:choices]) continue;
+        if (![configuredShuffle isEqual:content[@"Shuffle"] ?: @"$null"]) continue;
+        NSDictionary *cachedOptions = DecodePropertyList(content[@"OptionValues"] ?: content[@"EncodedOptionValues"]);
+        if (configuredOptions && ![configuredOptions isEqual:cachedOptions]) continue;
         NSURL *imageURL = [entry URLByAppendingPathComponent:@"Wallpaper.png"];
         if ([files isReadableFileAtPath:imageURL.path]) return imageURL;
     }
     return nil;
 }
 
-static NSArray *WallpaperRenderInput(NSURL *url, BOOL dark, NSUInteger maxPixels) {
+static NSURL *ConfiguredWallpaperFileURL(NSDictionary *content) {
+    NSArray *choices = WallpaperChoices(content);
+    if (choices.count != 1) return nil;
+    NSDictionary *choice = DecodePropertyList(choices.firstObject);
+    return WallpaperConfigurationFileURL(DecodePropertyList(choice[@"Configuration"]));
+}
+
+static NSArray *WallpaperImageFileState(NSURL *url) {
     NSString *path = url.URLByResolvingSymlinksInPath.path;
     struct stat info;
     if (!path || stat(path.fileSystemRepresentation, &info) != 0) return nil;
     // WallpaperAgent may rewrite its store without touching the selected image.
-    return @[path, @(dark), @(maxPixels), @(info.st_dev), @(info.st_ino), @(info.st_size),
+    return @[path, @(info.st_dev), @(info.st_ino), @(info.st_size),
              @(info.st_mtimespec.tv_sec), @(info.st_mtimespec.tv_nsec)];
+}
+
+static CALayer *WallpaperImageLayer(CALayer *parent, CGImageRef image) {
+    CALayer *layer = [CALayer layer];
+    layer.frame = parent.bounds;
+    layer.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
+    layer.contentsGravity = kCAGravityResizeAspectFill;
+    layer.contents = (__bridge id)image;
+    return layer;
+}
+
+static CABasicAnimation *WallpaperOpacityAnimation(NSNumber *from, NSNumber *to) {
+    CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    animation.fromValue = from;
+    animation.toValue = to;
+    animation.duration = 0.4;
+    animation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    return animation;
 }
 
 @interface WallpaperOverlay : NSObject
 @property (nonatomic, readonly) NSWindow *window;
 @property (nonatomic, copy) NSArray *renderInput;
+@property (nonatomic) size_t imageIndex;
+@property (nonatomic) CALayer *canvas;
+@property (nonatomic, weak) CALayer *imageLayer;
+@property (nonatomic) NSTimer *pendingHide;
 - (instancetype)initWithFrame:(NSRect)frame;
 - (void)moveToFrame:(NSRect)frame;
-- (void)showImage:(CGImageRef)image inFrame:(NSRect)frame;
+- (void)showImage:(CGImageRef)image inFrame:(NSRect)frame transition:(BOOL)transition;
+- (void)deferHiding;
+- (void)cancelPendingHide;
 - (void)hide;
 @end
 
@@ -171,14 +212,19 @@ static NSArray *WallpaperRenderInput(NSURL *url, BOOL dark, NSUInteger maxPixels
     _window.releasedWhenClosed = NO;
     _window.level = CGWindowLevelForKey(kCGDesktopWindowLevelKey) + 1;
     _window.ignoresMouseEvents = YES;
-    _window.opaque = YES;
-    _window.backgroundColor = NSColor.blackColor;
+    _window.opaque = NO;
+    _window.backgroundColor = NSColor.clearColor;
     _window.hasShadow = NO;
     _window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
         NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
     NSView *view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
     view.wantsLayer = YES;
-    view.layer.contentsGravity = kCAGravityResizeAspectFill;
+    _canvas = [CALayer layer];
+    _canvas.frame = view.bounds;
+    _canvas.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
+    _canvas.backgroundColor = NSColor.blackColor.CGColor;
+    _canvas.allowsGroupOpacity = YES;
+    [view.layer addSublayer:_canvas];
     _window.contentView = view;
     return self;
 }
@@ -188,18 +234,74 @@ static NSArray *WallpaperRenderInput(NSURL *url, BOOL dark, NSUInteger maxPixels
         [self.window setFrame:frame display:YES animate:NO];
 }
 
-- (void)showImage:(CGImageRef)image inFrame:(NSRect)frame {
+- (void)showImage:(CGImageRef)image inFrame:(NSRect)frame transition:(BOOL)transition {
+    [self cancelPendingHide];
+    BOOL showingWindow = !self.window.isVisible;
+    BOOL animate = (showingWindow || transition) &&
+        !NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    self.window.contentView.layer.contents = (__bridge id)image;
     [self moveToFrame:frame];
+    CALayer *previous = self.imageLayer;
+    if (animate || !previous) {
+        CALayer *incoming = WallpaperImageLayer(self.canvas, image);
+        incoming.backgroundColor = NSColor.blackColor.CGColor;
+        incoming.allowsGroupOpacity = YES;
+        [self.canvas addSublayer:incoming];
+        self.imageLayer = incoming;
+        if (animate) {
+            CALayer *fadeLayer = showingWindow ? self.canvas : incoming;
+            [self animateImage:image overLayer:previous fadingLayer:fadeLayer];
+        }
+    } else {
+        previous.contents = (__bridge id)image;
+    }
     [CATransaction commit];
-    if (!self.window.isVisible) [self.window orderFrontRegardless];
+    if (showingWindow) [self.window orderFrontRegardless];
+}
+
+- (void)animateImage:(CGImageRef)image overLayer:(CALayer *)previous fadingLayer:(CALayer *)fadeLayer {
+    // Keep older layers in place until the incoming image covers them.
+    CGImageRef blurredImage = CopyBlurredWallpaperPreview(image);
+    CALayer *preview = nil;
+    if (blurredImage) {
+        preview = WallpaperImageLayer(self.imageLayer, blurredImage);
+        CFRelease(blurredImage);
+        preview.opacity = 0;
+        [self.imageLayer addSublayer:preview];
+    }
+    [CATransaction setCompletionBlock:^{
+        [preview removeFromSuperlayer];
+        [previous removeFromSuperlayer];
+    }];
+    [fadeLayer addAnimation:WallpaperOpacityAnimation(@0, @1) forKey:WallpaperRevealAnimation];
+    [preview addAnimation:WallpaperOpacityAnimation(@1, @0) forKey:WallpaperRevealAnimation];
+}
+
+- (void)deferHiding {
+    if (!self.imageLayer || self.pendingHide) return;
+    // The new wallpaper's rendered cache can arrive after its configuration.
+    __weak WallpaperOverlay *overlay = self;
+    self.pendingHide = [NSTimer timerWithTimeInterval:1 repeats:NO block:^(NSTimer *timer) {
+        [overlay hide];
+    }];
+    [NSRunLoop.mainRunLoop addTimer:self.pendingHide forMode:NSRunLoopCommonModes];
+}
+
+- (void)cancelPendingHide {
+    [self.pendingHide invalidate];
+    self.pendingHide = nil;
 }
 
 - (void)hide {
+    [self cancelPendingHide];
     if (self.window.isVisible) [self.window orderOut:nil];
-    self.window.contentView.layer.contents = nil;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    [self.canvas removeAnimationForKey:WallpaperRevealAnimation];
+    self.canvas.sublayers = nil;
+    self.imageLayer = nil;
+    [CATransaction commit];
     self.renderInput = nil;
 }
 @end
@@ -369,30 +471,27 @@ static void WallpaperFilesDidChange(ConstFSEventStreamRef stream, void *context,
 
         NSArray<NSDictionary *> *settings = WallpaperSettings(screen, store);
         NSURL *url = [NSWorkspace.sharedWorkspace desktopImageURLForScreen:screen];
-        BOOL isCachedPhoto = NO;
+        BOOL usesSystemCache = NO;
         if (IsDefaultWallpaperURL(url)) {
-            NSArray *choices = ConfiguredPhotoChoices(settings);
-            if (choices) {
-                url = CachedPhotoWallpaperURL(choices, cacheDirectory);
-                if (!url) {
-                    NSLog(@"No matching Photos wallpaper cache for %@", screen.localizedName);
-                    [overlay hide];
-                    continue;
-                }
-                isCachedPhoto = YES;
-            }
+            NSDictionary *content = ConfiguredWallpaperContent(settings);
+            url = CachedWallpaperURL(content, cacheDirectory);
+            usesSystemCache = url != nil;
+            if (!url) url = ConfiguredWallpaperFileURL(content);
         }
         if (!url) {
-            [overlay hide];
+            NSLog(@"No matching wallpaper image for %@", screen.localizedName);
+            [overlay deferHiding];
             continue;
         }
         NSString *override = ConfiguredAppearance(url, settings);
-        BOOL dark = [override isEqualToString:@"dark"] ? YES :
-                    [override isEqualToString:@"light"] ? NO : systemDark;
+        BOOL dark = !usesSystemCache && ([override isEqualToString:@"dark"] ||
+            (systemDark && ![override isEqualToString:@"light"]));
         NSUInteger maxPixels = (NSUInteger)ceil(MAX(screen.frame.size.width,
             screen.frame.size.height) * screen.backingScaleFactor);
-        NSArray *renderInput = WallpaperRenderInput(url, dark, maxPixels);
+        NSArray *fileState = WallpaperImageFileState(url);
+        NSArray *renderInput = fileState ? @[fileState, @(dark), @(maxPixels)] : nil;
         if (!forceReload && renderInput && [overlay.renderInput isEqualToArray:renderInput]) {
+            [overlay cancelPendingHide];
             [overlay moveToFrame:screen.frame];
             continue;
         }
@@ -401,7 +500,7 @@ static void WallpaperFilesDidChange(ConstFSEventStreamRef stream, void *context,
         CGImageRef image = CopyWallpaperImage(url, dark, maxPixels, &index);
         if (!image) {
             NSLog(@"Unable to load wallpaper for %@: %@", screen.localizedName, url.path);
-            [overlay hide];
+            [overlay deferHiding];
             continue;
         }
 
@@ -409,15 +508,22 @@ static void WallpaperFilesDidChange(ConstFSEventStreamRef stream, void *context,
             overlay = [[WallpaperOverlay alloc] initWithFrame:screen.frame];
             attachedOverlays[displayID] = overlay;
         }
-        [overlay showImage:image inFrame:screen.frame];
+        BOOL newImage = (fileState && ![fileState isEqual:overlay.renderInput.firstObject]) ||
+            overlay.imageIndex != index;
+        [overlay showImage:image inFrame:screen.frame transition:newImage];
         overlay.renderInput = renderInput;
+        overlay.imageIndex = index;
         CFRelease(image);
-        NSLog(isCachedPhoto ? @"Wallpaper refreshed from Photos cache: %@, %@, frame %zu, %@" :
+        NSString *renderedAppearance = usesSystemCache ? @"rendered snapshot" : (dark ? @"dark" : @"light");
+        NSLog(usesSystemCache ? @"Wallpaper refreshed from system cache: %@, %@, frame %zu, %@" :
               @"Wallpaper refreshed: %@, %@, frame %zu, %@", screen.localizedName,
-              url.lastPathComponent, index, dark ? @"dark" : @"light");
+              url.lastPathComponent, index, renderedAppearance);
     }
     for (NSNumber *displayID in self.overlays) {
-        if (!attachedOverlays[displayID]) [self.overlays[displayID].window close];
+        if (attachedOverlays[displayID]) continue;
+        WallpaperOverlay *overlay = self.overlays[displayID];
+        [overlay hide];
+        [overlay.window close];
     }
     self.overlays = attachedOverlays;
 }

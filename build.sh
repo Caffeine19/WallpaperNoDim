@@ -8,7 +8,7 @@ if [[ ! -d "$sdk_path" ]]; then
 fi
 mkdir -p "$app_path/Contents/MacOS"
 xcrun --sdk macosx clang -isysroot "$sdk_path" -fobjc-arc \
-  -framework AppKit -framework QuartzCore -framework CoreGraphics -framework CoreServices -framework ImageIO -framework ServiceManagement \
+  -framework AppKit -framework QuartzCore -framework CoreGraphics -framework CoreImage -framework CoreServices -framework ImageIO -framework ServiceManagement \
   WallpaperNoDimTest.m WallpaperImage.m -o "$app_path/Contents/MacOS/WallpaperNoDim"
 codesign --force --sign - "$app_path"
 codesign --verify --strict "$app_path"

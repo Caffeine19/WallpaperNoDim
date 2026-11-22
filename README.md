@@ -12,7 +12,7 @@ I built this small desktop app with help from GPT-6 in Codex after macOS started
 
 ## How it works
 
-The app reads the wallpaper image for each connected screen and displays a static copy in a borderless window, just above the desktop window level. These windows ignore mouse clicks and join all Spaces. For dynamic HEIC files, it reads the embedded light/dark image mapping instead of always displaying the primary frame. Automatic selection follows the system appearance; recognized wallpaper-specific Light/Dark settings take precedence.
+The app reads the wallpaper image for each connected screen and displays a static copy in a borderless window, just above the desktop window level. These windows ignore mouse clicks and join all Spaces. When AppKit returns the default image for another wallpaper, the app looks for a system-rendered snapshot that matches the wallpaper settings. It can also use an image file named in those settings. If neither source is available, the system wallpaper remains visible. When the source is a dynamic HEIC file, the app uses its embedded light/dark mapping and follows the system appearance unless it recognizes a wallpaper-specific override.
 
 On my setup, the copies remain bright while I use native Fill / Maximize. The system's dimming behavior still exists underneath: this app provides a visual workaround. It does not resize app windows, modify system files, or require disabling System Integrity Protection (SIP).
 
